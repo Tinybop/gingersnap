@@ -1,10 +1,10 @@
 name:                gingersnap
 version:             0.1.0.0
--- synopsis:            
--- description:         
-license:             MIT
+synopsis:            snap-core + aeson + postgresql-simple = delicious
+description:         JSON API idioms for snap-core, preventing DB connection leaks
+license:             BSD3
 license-file:        LICENSE
-author:              tom-bop
+author:              Tinybop Labs, tom-bop
 maintainer:          tom@tinybop.com
 -- copyright:           
 category:            Web
