@@ -32,6 +32,10 @@ module Gingersnap.Core (
    , rspIsGood
 
    , errorEarlyCode
+
+   -- Maybe?:
+   -- , module import Network.HTTP.Types.Status
+   -- , module Snap.Core
    ) where
 
 import qualified Control.Exception as E
@@ -47,8 +51,9 @@ import qualified Data.Pool as Pool
 import Database.PostgreSQL.Simple (Connection)
 import qualified Database.PostgreSQL.Simple as PSQL
 import qualified Database.PostgreSQL.Simple.Transaction as PSQL
-import Network.HTTP.Types.Status as HTTP
-import Snap.Core as Snap
+import qualified Network.HTTP.Types.Status as HTTP
+import Snap.Core (Snap)
+import qualified Snap.Core as Snap
 
 class IsCtx ctx where
    ctxConnectionPool :: ctx -> Pool Connection
@@ -86,7 +91,7 @@ data DefaultErrors
 instance ApiErr DefaultErrors where
    errResult :: DefaultErrors -> ErrResult
    errResult = \case
-      DefaultErrors_ReadOnlyMode -> ErrResult serviceUnavailable503 $
+      DefaultErrors_ReadOnlyMode -> ErrResult HTTP.serviceUnavailable503 $
          JSON.object [
               "errorCode" .= (0 :: Int)
             , "errorMessage" .= JSON.String "This action is unavailable in read-only mode"
@@ -122,13 +127,13 @@ rspBad e       = Rsp ShouldRollback $ RspPayload_Bad e
 rspBadCommit e = Rsp ShouldCommit   $ RspPayload_Bad e
 
 rspGoodCSV :: BSL.ByteString -> Rsp
-rspGoodCSV bs = Rsp ShouldCommit $ RspPayload_Custom ok200 (BS8.pack "text/csv") bs
+rspGoodCSV bs = Rsp ShouldCommit $ RspPayload_Custom HTTP.ok200 (BS8.pack "text/csv") bs
 
 -- | First Bytestring is the content type, e.g. "application/json"
 --   Here's a helpful list:
 --   https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/MIME_types/Complete_list_of_MIME_types
 rspGoodLBS :: BS.ByteString -> BSL.ByteString -> Rsp
-rspGoodLBS mimeType bs = Rsp ShouldCommit $ RspPayload_Custom ok200 mimeType bs
+rspGoodLBS mimeType bs = Rsp ShouldCommit $ RspPayload_Custom HTTP.ok200 mimeType bs
 
 -- | Everything worked and we send a 200, but we don't have any data to send
 rspEmptyGood :: Rsp
@@ -153,7 +158,7 @@ rspIsGood :: Rsp -> Bool
 rspIsGood (Rsp _ payload) = case payload of
    RspPayload_Good {} -> True
    RspPayload_Bad {} -> False
-   RspPayload_Custom httpStatus _ _ -> httpStatus == ok200
+   RspPayload_Custom httpStatus _ _ -> httpStatus == HTTP.ok200
    RspPayload_Empty -> True
 
 instance Show Rsp where
@@ -190,10 +195,11 @@ inTransaction_readOnly ctx f =
 -- | YOU SHOULD ONLY USE THIS ONCE
 -- 
 --   This lets you do a write transaction during read-only mode (not a
---     read-only transaction! _Our_ server read-only mode)
+--     read-only transaction! A time where 'ctxGetReadOnlyMode' would return
+--     True)
 -- 
---   The only reason we need this is so that an admin can take us out of
---    read-only mode
+--   You may need this so that an admin user can take the app out of read-only
+--     mode
 inTransaction_override :: IsCtx ctx => ctx -> (Connection -> IO Rsp) -> Snap ()
 inTransaction_override ctx action =
    inTransaction_internal ctx PSQL.Serializable PSQL.ReadWrite action
