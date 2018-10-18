@@ -1,5 +1,6 @@
 {-# LANGUAGE
      ExistentialQuantification
+   , InstanceSigs
    , LambdaCase
    , OverloadedStrings
    , ViewPatterns
@@ -72,6 +73,7 @@ data DefaultErrors
  deriving (Show, Eq)
 
 instance ApiErr DefaultErrors where
+   errResult :: DefaultErrors -> ErrResult
    errResult = \case
       DefaultErrors_ReadOnlyMode -> ErrResult serviceUnavailable503 $
          JSON.object [
@@ -116,6 +118,11 @@ data Rsp
    --     information about our users)
    | RspEmptyGoodRollback
 
+data ShouldCommitOrRollback
+   = ShouldCommit
+   | ShouldRollback
+ deriving (Show, Eq)
+
 rspGood :: ToJSON x => x -> Rsp
 rspGood = RspGood
 rspBad :: ApiErr ae => ae -> Rsp
@@ -136,15 +143,15 @@ rspIsGood = \case
    RspEmptyGood -> True
    RspEmptyGoodRollback -> False -- Note!
 
-rspWillCommit :: Rsp -> Bool
+rspWillCommit :: Rsp -> ShouldCommitOrRollback
 rspWillCommit = \case
-   RspGood {} -> True
-   RspGoodLBS {} -> True
-   RspBad {} -> False
-   RspGoodRollback {} -> False
-   RspBadCommit {} -> True
-   RspEmptyGood -> True
-   RspEmptyGoodRollback -> False
+   RspGood {} -> ShouldCommit
+   RspGoodLBS {} -> ShouldCommit
+   RspBad {} -> ShouldRollback
+   RspGoodRollback {} -> ShouldRollback
+   RspBadCommit {} -> ShouldCommit
+   RspEmptyGood -> ShouldCommit
+   RspEmptyGoodRollback -> ShouldRollback
 
 -- TODO: this will change very shortly
 instance Show Rsp where
@@ -214,18 +221,9 @@ inTransaction_internal ctx isolationLevel' readWriteMode' actionThatReturnsAResp
          PSQL.beginMode transactMode conn
          r <- restore (actionThatReturnsAResponse conn)
             `E.onException` rollback_ conn
-         -- TODO: maybe use 'rspWillCommit' here?:
-         (case r of
-            -- Commit:
-            RspGood {} -> commit conn
-            RspGoodLBS {} -> commit conn
-            RspBadCommit {} -> commit conn
-            RspEmptyGood -> commit conn
-
-            -- Roll back:
-            RspBad {} -> rollback_ conn
-            RspGoodRollback {} -> rollback_ conn
-            RspEmptyGoodRollback {} -> rollback_ conn
+         (case rspWillCommit r of
+            ShouldCommit -> commit conn
+            ShouldRollback -> rollback_ conn
             ) `E.onException` rollback_ conn -- To be safe. E.g. what if inspecting 'r' errors?
          pure r
    pureRsp ctx rsp
