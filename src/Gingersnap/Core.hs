@@ -44,7 +44,7 @@ import Data.Pool (Pool)
 import qualified Data.Pool as Pool
 import Database.PostgreSQL.Simple (Connection)
 import qualified Database.PostgreSQL.Simple as PSQL
-import Database.PostgreSQL.Simple.Transaction as PSQL
+import qualified Database.PostgreSQL.Simple.Transaction as PSQL
 import Network.HTTP.Types.Status as HTTP
 import Snap.Core as Snap
 
@@ -186,7 +186,7 @@ instance Show Rsp where
 --   (It also has the side benefit of keeping our code fairly framework-agnostic)
 inTransaction :: IsCtx ctx => ctx -> (Connection -> IO Rsp) -> Snap ()
 inTransaction ctx actionThatReturnsAnRsp = do
-   inTransactionMode ctx Serializable ReadWrite actionThatReturnsAnRsp
+   inTransactionMode ctx PSQL.Serializable PSQL.ReadWrite actionThatReturnsAnRsp
 
 -- | An endpoint that uses 'inTransaction_readOnly' will keep responding even
 --   when the server is in read-only mode.
@@ -196,7 +196,7 @@ inTransaction ctx actionThatReturnsAnRsp = do
 --   checks that to be true!
 inTransaction_readOnly :: IsCtx ctx => ctx -> (Connection -> IO Rsp) -> Snap ()
 inTransaction_readOnly ctx f =
-   inTransactionMode ctx Serializable ReadOnly f
+   inTransactionMode ctx PSQL.Serializable PSQL.ReadOnly f
 
 -- | YOU SHOULD ONLY USE THIS ONCE
 -- 
@@ -222,14 +222,14 @@ inTransactionMode ctx isolationLevel' readWriteMode' actionThatReturnsAResponse 
 inTransaction_internal :: IsCtx ctx => ctx -> PSQL.IsolationLevel -> PSQL.ReadWriteMode -> (Connection -> IO Rsp) -> Snap ()
 inTransaction_internal ctx isolationLevel' readWriteMode' actionThatReturnsAResponse = do
 
-   let transactMode = TransactionMode isolationLevel' readWriteMode'
+   let transactMode = PSQL.TransactionMode isolationLevel' readWriteMode'
    rsp <- liftIO $ Pool.withResource (ctxConnectionPool ctx) $ \conn ->
       E.mask $ \restore -> do
          PSQL.beginMode transactMode conn
          r <- restore (actionThatReturnsAResponse conn)
             `E.onException` rollback_ conn
          (case rspWillCommit r of
-            ShouldCommit -> commit conn
+            ShouldCommit -> PSQL.commit conn
             ShouldRollback -> rollback_ conn
             ) `E.onException` rollback_ conn -- To be safe. E.g. what if inspecting 'r' errors?
          pure r
@@ -255,7 +255,7 @@ pureRsp ctx = \case
 -- Take a look at how postgresql-simple does it:
 rollback_ :: Connection -> IO ()
 rollback_ conn =
-   rollback conn `E.catch` ((\_ -> return ()) :: IOError -> IO ())
+   PSQL.rollback conn `E.catch` ((\_ -> return ()) :: IOError -> IO ())
 
 writeLBSSuccess_dontUseThis :: BS.ByteString -> BSL.ByteString -> Snap ()
 writeLBSSuccess_dontUseThis contentType b = do
