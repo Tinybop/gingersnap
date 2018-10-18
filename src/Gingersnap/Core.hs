@@ -12,6 +12,7 @@ module Gingersnap.Core (
    , ErrResult(..)
 
    , Rsp
+   , ShouldCommitOrRollback(..)
    , rspGood
    , rspBad
    , rspGoodCSV
@@ -125,13 +126,19 @@ data ShouldCommitOrRollback
 
 rspGood :: ToJSON x => x -> Rsp
 rspGood = RspGood
-rspBad :: ApiErr ae => ae -> Rsp
+
+rspBad, rspBadCommit :: ApiErr ae => ae -> Rsp
 rspBad = RspBad
-rspGoodCSV = RspGoodLBS (BS8.pack "text/csv")
-rspGoodLBS = RspGoodLBS
-rspEmptyGood = RspEmptyGood
-rspBadCommit :: ApiErr ae => ae -> Rsp
 rspBadCommit = RspBadCommit
+
+rspGoodCSV :: BSL.ByteString -> Rsp
+rspGoodCSV = RspGoodLBS (BS8.pack "text/csv")
+
+rspGoodLBS :: BS.ByteString -> BSL.ByteString -> Rsp
+rspGoodLBS = RspGoodLBS
+
+rspEmptyGood :: Rsp
+rspEmptyGood = RspEmptyGood
 
 rspIsGood :: Rsp -> Bool
 rspIsGood = \case
