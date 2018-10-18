@@ -11,8 +11,11 @@ module Gingersnap.Core (
    , ApiErr(..)
    , ErrResult(..)
 
-   , Rsp
-   , ShouldCommitOrRollback(..)
+   , Rsp -- (..) -- Maybe export this and 'ShouldCommitOrRollback' in the future
+   -- TODO: move these lower in export list for Haddocks:
+   -- , RspPayload
+   -- , ShouldCommitOrRollback(..)
+
    , rspGood
    , rspBad
    , rspGoodCSV
@@ -27,7 +30,6 @@ module Gingersnap.Core (
    , inTransaction_override
    , inTransactionMode
    , rspIsGood
-   , rspWillCommit
 
    , errorEarlyCode
    ) where
@@ -66,6 +68,14 @@ data ErrResult
    = ErrResult HTTP.Status JSON.Value
  deriving (Show, Eq)
 
+-- Might be nice, since we don't have a Read.
+-- But probably better for a 'pretty*' function
+{-
+instance Show ErrResult where
+   show (ErrResult status j) =
+      "ErrResult "++show status++" "++show (JSON.encode j)
+-}
+
 instance ApiErr ErrResult where
    errResult x = x
 
@@ -82,35 +92,54 @@ instance ApiErr DefaultErrors where
             , "errorMessage" .= JSON.String "This action is unavailable in read-only mode"
             ]
 
--- | Responses
--- 
---   Don't use these directly! They'll soon be compressed into a few general-
---     purpose constructors
 data Rsp
-   -- This is an existential so that 'Rsp' doesn't need a type param, meaning you
-   -- don't need to give a signature to 'RspBad':
+   = Rsp {
+     rspShouldCommit :: ShouldCommitOrRollback
+   , rspPayload :: RspPayload
+   }
 
-   -- | This means everything's succeeded. We should commit DB changes and
-   --   return a success object
-   = forall x. ToJSON x => RspGood x
+data RspPayload
+   = forall x. ToJSON x => RspPayload_Good x
+   | forall e. ApiErr e => RspPayload_Bad e
+   -- First ByteString is MIME type; second is response body:
+   | RspPayload_Custom HTTP.Status BS.ByteString BSL.ByteString
+   | RspPayload_Empty -- This might be a dupe with '_Custom' but it's nice to have
 
-   -- | First Bytestring is the content type, e.g. "application/json"
-   --   Here's a helpful list:
-   --   https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/MIME_types/Complete_list_of_MIME_types
-   | RspGoodLBS BS.ByteString BSL.ByteString
+data ShouldCommitOrRollback
+   = ShouldCommit
+   | ShouldRollback
+ deriving (Show, Eq)
 
-   -- | We should send back an error object and roll back DB changes
-   | forall ae. ApiErr ae => RspBad ae
+-- | This means everything's succeeded. We should commit DB changes and
+--   return a success object
+rspGood :: ToJSON x => x -> Rsp
+rspGood x = Rsp ShouldCommit $ RspPayload_Good x
 
-   -- | Like 'RspBad' but should still commit DB changes
-   | forall ae. ApiErr ae => RspBadCommit ae
+rspBad, rspBadCommit :: ApiErr ae => ae -> Rsp
+-- | We should send back an error object and roll back DB changes
+rspBad e       = Rsp ShouldRollback $ RspPayload_Bad e
+-- | Like 'RspBad' but should still commit DB changes
+rspBadCommit e = Rsp ShouldCommit   $ RspPayload_Bad e
 
+rspGoodCSV :: BSL.ByteString -> Rsp
+rspGoodCSV bs = Rsp ShouldCommit $ RspPayload_Custom ok200 (BS8.pack "text/csv") bs
+
+-- | First Bytestring is the content type, e.g. "application/json"
+--   Here's a helpful list:
+--   https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/MIME_types/Complete_list_of_MIME_types
+rspGoodLBS :: BS.ByteString -> BSL.ByteString -> Rsp
+rspGoodLBS mimeType bs = Rsp ShouldCommit $ RspPayload_Custom ok200 mimeType bs
+
+-- | Everything worked and we send a 200, but we don't have any data to send
+rspEmptyGood :: Rsp
+rspEmptyGood = Rsp ShouldCommit RspPayload_Empty
+
+-- Extra helpers we could add:
+{-
+data Rsp
    -- | Like 'RspGood' but rolls back. Sure, why not? Maybe we'll want this for
    --   something...
    | forall x. ToJSON x => RspGoodRollback x
-
-   -- | Everything worked and we send a 200, but we don't have any data to send
-   | RspEmptyGood
 
    -- | We use this in the case where we want to rollback but don't want to tell
    --     the user about it. E.g. if we want to not create an account because
@@ -118,62 +147,22 @@ data Rsp
    --     unauthenticated user that that email is taken (because it's leaking
    --     information about our users)
    | RspEmptyGoodRollback
-
-data ShouldCommitOrRollback
-   = ShouldCommit
-   | ShouldRollback
- deriving (Show, Eq)
-
-rspGood :: ToJSON x => x -> Rsp
-rspGood = RspGood
-
-rspBad, rspBadCommit :: ApiErr ae => ae -> Rsp
-rspBad = RspBad
-rspBadCommit = RspBadCommit
-
-rspGoodCSV :: BSL.ByteString -> Rsp
-rspGoodCSV = RspGoodLBS (BS8.pack "text/csv")
-
-rspGoodLBS :: BS.ByteString -> BSL.ByteString -> Rsp
-rspGoodLBS = RspGoodLBS
-
-rspEmptyGood :: Rsp
-rspEmptyGood = RspEmptyGood
+-}
 
 rspIsGood :: Rsp -> Bool
-rspIsGood = \case
-   RspGood {} -> True
-   RspGoodLBS {} -> True
-   RspBad {} -> False
-   RspGoodRollback {} -> True
-   RspBadCommit {} -> False
-   RspEmptyGood -> True
-   RspEmptyGoodRollback -> False -- Note!
+rspIsGood (Rsp _ payload) = case payload of
+   RspPayload_Good {} -> True
+   RspPayload_Bad {} -> False
+   RspPayload_Custom httpStatus _ _ -> httpStatus == ok200
+   RspPayload_Empty -> True
 
-rspWillCommit :: Rsp -> ShouldCommitOrRollback
-rspWillCommit = \case
-   RspGood {} -> ShouldCommit
-   RspGoodLBS {} -> ShouldCommit
-   RspBad {} -> ShouldRollback
-   RspGoodRollback {} -> ShouldRollback
-   RspBadCommit {} -> ShouldCommit
-   RspEmptyGood -> ShouldCommit
-   RspEmptyGoodRollback -> ShouldRollback
-
--- TODO: this will change very shortly
 instance Show Rsp where
-   show = \case
-      -- TODO: finish this up:
-      RspGood x -> "(RspGood: "++show (JSON.encode x)++")"
-      RspGoodLBS a b -> "(RspGoodCSV: "++show (a, b)++")"
-      RspBad {} -> "RspBad" {- (errResult -> (status, toJSON -> ae))->
-         "(RspBad: "++show status++show (JSON.encode ae)++")" -}
-      RspBadCommit {} -> "RspBadCommit" {- (errResult -> (status, toJSON -> ae)) ->
-         "(RspBadCommit: "++show status++show (JSON.encode ae)++")" -}
-      RspGoodRollback {} -> "RspGoodRollback"
-      RspEmptyGood -> "RspEmptyGood"
-      RspEmptyGoodRollback -> "RspEmptyGoodRollback"
-
+   show (Rsp commit payload) =
+      "Rsp "++show commit++" "++case payload of
+         RspPayload_Good x -> "(Good "++show (JSON.encode x)++")"
+         RspPayload_Bad (errResult -> e) -> "(Bad "++show e++")"
+         RspPayload_Empty -> "Empty"
+         RspPayload_Custom a b c -> "(Custom "++show (a,b,c)++")"
 
 -- | *If you hit the DB, use this function!*
 -- 
@@ -183,7 +172,7 @@ instance Show Rsp where
 -- 
 --   NOTE this is for IO actions, not Snap actions. This is to ensure we can't
 --   call e.g. 'finishEarly' and never hit the 'end transaction' code!
---   (It also has the side benefit of keeping our code fairly framework-agnostic)
+--   (It also has the side benefit of keeping code fairly framework-agnostic)
 inTransaction :: IsCtx ctx => ctx -> (Connection -> IO Rsp) -> Snap ()
 inTransaction ctx actionThatReturnsAnRsp = do
    inTransactionMode ctx PSQL.Serializable PSQL.ReadWrite actionThatReturnsAnRsp
@@ -228,29 +217,25 @@ inTransaction_internal ctx isolationLevel' readWriteMode' actionThatReturnsAResp
          PSQL.beginMode transactMode conn
          r <- restore (actionThatReturnsAResponse conn)
             `E.onException` rollback_ conn
-         (case rspWillCommit r of
+         (case rspShouldCommit r of
             ShouldCommit -> PSQL.commit conn
+            -- Note it is safe to call rollback on a read-only transaction:
+            -- https://www.postgresql.org/message-id/26036.1114469591%40sss.pgh.pa.us
             ShouldRollback -> rollback_ conn
             ) `E.onException` rollback_ conn -- To be safe. E.g. what if inspecting 'r' errors?
          pure r
    pureRsp ctx rsp
 
--- Sometimes you don't need a DB connection at all!
--- (I can't believe we haven't needed this function up until now!)
+-- | Sometimes you don't need a DB connection at all!
 pureRsp :: IsCtx ctx => ctx -> Rsp -> Snap ()
-pureRsp ctx = \case
--- TODO: is 'rollback' fine on readonly transactions? - look up
-      -- Write success:
-      RspGood v -> writeJSON $ ctx_wrapSuccess ctx v
-      RspGoodLBS contentType x -> writeLBSSuccess_dontUseThis contentType x
-      RspGoodRollback v -> writeJSON $ ctx_wrapSuccess ctx v
-
-      -- Write error:
-      RspBad err -> writeApiErr err
-      RspBadCommit err -> writeApiErr err
-      RspEmptyGood -> Snap.writeBS ""
-      RspEmptyGoodRollback -> Snap.writeBS ""
-
+pureRsp ctx (Rsp _ payload) = case payload of
+   RspPayload_Empty -> Snap.writeBS ""
+   RspPayload_Good v -> writeJSON $ ctx_wrapSuccess ctx v
+   RspPayload_Bad e -> writeApiErr e
+   RspPayload_Custom httpStatus mimeType bs -> do
+      Snap.modifyResponse $ Snap.setResponseCode $
+         HTTP.statusCode httpStatus
+      writeLBSSuccess_dontUseThis mimeType bs
 
 -- Take a look at how postgresql-simple does it:
 rollback_ :: Connection -> IO ()
