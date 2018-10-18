@@ -6,11 +6,16 @@ license:             BSD3
 license-file:        LICENSE
 author:              Tinybop Labs, tom-bop
 maintainer:          tom@tinybop.com
+homepage:            https://github.com/Tinybop/gingersnap
 -- copyright:           
 category:            Web
 build-type:          Simple
 extra-source-files:  ChangeLog.md
 cabal-version:       >=1.10
+
+source-repository head
+  type:     git
+  location: https://github.com/Tinybop/gingersnap
 
 library
   exposed-modules:
