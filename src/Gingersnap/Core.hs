@@ -59,6 +59,7 @@ class IsCtx ctx where
    ctxConnectionPool :: ctx -> Pool Connection
 
    ctxGetReadOnlyMode :: ctx -> IO Bool
+   ctxGetReadOnlyMode _ = pure False
 
    ctx_wrapSuccess :: ToJSON x => ctx -> x -> JSON.Value
    ctx_wrapSuccess _ x = JSON.object ["result" .= x]
