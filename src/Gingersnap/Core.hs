@@ -18,10 +18,11 @@ module Gingersnap.Core (
 
    , rspGood
    , rspBad
+   , rspBadCommit
+   , rspBadRollback
    , rspGoodCSV
    , rspGoodLBS
    , rspEmptyGood
-   , rspBadCommit
 
    , pureRsp
 
@@ -121,11 +122,13 @@ data ShouldCommitOrRollback
 rspGood :: ToJSON x => x -> Rsp
 rspGood x = Rsp ShouldCommit $ RspPayload_Good x
 
-rspBad, rspBadCommit :: ApiErr ae => ae -> Rsp
+rspBad, rspBadCommit, rspBadRollback :: ApiErr ae => ae -> Rsp
 -- | We should send back an error object and roll back DB changes
 rspBad e       = Rsp ShouldRollback $ RspPayload_Bad e
--- | Like 'RspBad' but should still commit DB changes
+-- | Like 'rspBad' but should still commit DB changes
 rspBadCommit e = Rsp ShouldCommit   $ RspPayload_Bad e
+-- | The same as 'rspBad' but more explicit that we roll back
+rspBadRollback e = Rsp ShouldRollback $ RspPayload_Bad e
 
 rspGoodCSV :: BSL.ByteString -> Rsp
 rspGoodCSV bs = Rsp ShouldCommit $ RspPayload_Custom HTTP.ok200 (BS8.pack "text/csv") bs
@@ -135,6 +138,12 @@ rspGoodCSV bs = Rsp ShouldCommit $ RspPayload_Custom HTTP.ok200 (BS8.pack "text/
 --   https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/MIME_types/Complete_list_of_MIME_types
 rspGoodLBS :: BS.ByteString -> BSL.ByteString -> Rsp
 rspGoodLBS mimeType bs = Rsp ShouldCommit $ RspPayload_Custom HTTP.ok200 mimeType bs
+
+{-
+rspCustomLBS :: ShouldCommitOrRollback -> HTTP.Status -> BS.ByteString -> BSL.ByteString -> Rsp
+rspCustomLBS shouldCommit status mimeType bs =
+   Rsp shouldCommit $ RspPayload_Custom status mimeType bs
+-}
 
 -- | Everything worked and we send a 200, but we don't have any data to send
 rspEmptyGood :: Rsp
