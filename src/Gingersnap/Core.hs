@@ -11,10 +11,7 @@ module Gingersnap.Core (
    , ApiErr(..)
    , ErrResult(..)
 
-   , Rsp -- (..) -- Maybe export this and 'ShouldCommitOrRollback' in the future
-   -- TODO: move these lower in export list for Haddocks:
-   -- , RspPayload
-   -- , ShouldCommitOrRollback(..)
+   , Rsp(..)
 
    , rspGood
    , rspBad
@@ -33,6 +30,11 @@ module Gingersnap.Core (
    , rspIsGood
 
    , errorEarlyCode
+
+   -- These won't typically be inspected by hand but there's no reason we should
+   --   block people from inspecting them if they like
+   , RspPayload(..)
+   , ShouldCommitOrRollback(..)
 
    -- Maybe?:
    -- , module import Network.HTTP.Types.Status
