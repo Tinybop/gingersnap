@@ -1,5 +1,5 @@
 name:                gingersnap
-version:             0.1.3.0
+version:             0.1.4.0
 synopsis:            snap-core + aeson + postgresql-simple = delicious
 description:
   JSON API idioms for snap-core, preventing DB connection leaks.
@@ -12,7 +12,9 @@ homepage:            https://github.com/Tinybop/gingersnap
 -- copyright:           
 category:            Web
 build-type:          Simple
-extra-source-files:  ChangeLog.md
+extra-source-files:
+  ChangeLog.md
+  README.md
 cabal-version:       >=1.10
 
 source-repository head
