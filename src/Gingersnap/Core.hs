@@ -36,6 +36,12 @@ module Gingersnap.Core (
    , RspPayload(..)
    , ShouldCommitOrRollback(..)
 
+
+   -- * Reexports, for convenience
+   , Pool
+   , createPool
+   , Connection
+
    -- Maybe?:
    -- , module import Network.HTTP.Types.Status
    -- , module Snap.Core
@@ -49,7 +55,7 @@ import qualified Data.Aeson as JSON
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BSL
-import Data.Pool (Pool)
+import Data.Pool (Pool, createPool)
 import qualified Data.Pool as Pool
 import Database.PostgreSQL.Simple (Connection)
 import qualified Database.PostgreSQL.Simple as PSQL
