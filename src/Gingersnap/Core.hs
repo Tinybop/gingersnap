@@ -110,7 +110,7 @@ data Rsp
 data RspPayload
    = forall x. ToJSON x => RspPayload_Good x
    | forall e. ApiErr e => RspPayload_Bad e
-   -- First ByteString is MIME type; second is response body:
+   -- | First ByteString is MIME type; second is response body
    | RspPayload_Custom HTTP.Status BS.ByteString BSL.ByteString
    | RspPayload_Empty -- This might be a dupe with '_Custom' but it's nice to have
 
