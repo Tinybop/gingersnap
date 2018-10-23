@@ -19,7 +19,7 @@ A few imports we'll need for this tutorial:
 {-# LANGUAGE DeriveGeneric, OverloadedStrings #-}
 
 import Data.Aeson (ToJSON)
-import qualified Database.PostgreSQL.Simple as PSQL
+import Database.PostgreSQL.Simple
  -- For our automatic JSON instance:
 import GHC.Generics (Generic)
 import Gingersnap.Core
@@ -105,7 +105,7 @@ to your handlers, too.
 So let's define our own! We unimaginitavely call it "Ctx":
 
 ```haskell
-data Ctx = Ctx { ctx_db :: Pool PSQL.Connection }
+data Ctx = Ctx { ctx_db :: Pool Connection }
 
 instance IsCtx Ctx where
    ctxConnectionPool = ctx_db
@@ -119,7 +119,7 @@ makeCtx = do
 
    -- Setting up the DB connection pool:
    let connString = " host=localhost port=5432 dbname=postgres user=postgres "
-   pool <- createPool (PSQL.connectPostgreSQL connString) PSQL.close 1 5 20
+   pool <- createPool (connectPostgreSQL connString) close 1 5 20
 
    pure $ Ctx { ctx_db = pool }
 ```
@@ -135,7 +135,7 @@ Now that we've got (through Ctx) a DB connection pool, let's query the DB:
 two :: Ctx -> Snap ()
 two ctx = do
    inTransaction ctx $ \conn -> do
-      [PSQL.Only x] <- PSQL.query_ conn " SELECT 2 + 2 "
+      [Only x] <- query_ conn " SELECT 2 + 2 "
       pure $ rspGood $ SomeData x True
 ```
 
