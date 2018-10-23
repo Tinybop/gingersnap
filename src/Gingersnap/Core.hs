@@ -7,11 +7,8 @@
    #-}
 
 module Gingersnap.Core (
-     IsCtx(..)
-   , ApiErr(..)
-   , ErrResult(..)
-
-   , Rsp(..)
+   -- * Rsp
+     Rsp(..)
 
    , rspGood
    , rspBad
@@ -21,16 +18,26 @@ module Gingersnap.Core (
    , rspGoodLBS
    , rspEmptyGood
 
+   -- * pureRsp
    , pureRsp
 
+   -- * DB Transactions
    , inTransaction
    , inTransaction_readOnly
    , inTransaction_override
    , inTransactionMode
    , rspIsGood
 
+   -- * IsCtx
+   , IsCtx(..)
+
+   -- * Errors
+   , ApiErr(..)
+   , ErrResult(..)
+
    , errorEarlyCode
 
+   -- * Internals
    -- These won't typically be inspected by hand but there's no reason we should
    --   block people from inspecting them if they like
    , RspPayload(..)
@@ -107,6 +114,8 @@ instance ApiErr DefaultErrors where
             , "errorMessage" .= JSON.String "This action is unavailable in read-only mode"
             ]
 
+-- | How we construct responses. You probably don't want to be constructing or
+--   inspecting them by hand; instead you can use 'rspGood', 'rspBadRollback', etc.
 data Rsp
    = Rsp {
      rspShouldCommit :: ShouldCommitOrRollback
