@@ -1,8 +1,10 @@
 {-# LANGUAGE
      ExistentialQuantification
+   , FlexibleContexts
    , InstanceSigs
    , LambdaCase
    , OverloadedStrings
+   , TypeFamilies
    , ViewPatterns
    #-}
 
@@ -34,8 +36,10 @@ module Gingersnap.Core (
    -- * Errors
    , ApiErr(..)
    , ErrResult(..)
+   , DefaultApiErr(..)
 
    , errorEarlyCode
+   , ctxErr
 
    -- * Internals
    -- These won't typically be inspected by hand but there's no reason we should
@@ -43,6 +47,10 @@ module Gingersnap.Core (
    , RspPayload(..)
    , ShouldCommitOrRollback(..)
 
+   , reqObject
+   , reqObject'
+   , (.!)
+   , (.!?)
 
    -- * Reexports, for convenience
    , Pool
@@ -57,13 +65,16 @@ module Gingersnap.Core (
 import qualified Control.Exception as E
 import Control.Monad
 import Control.Monad.IO.Class (liftIO)
-import Data.Aeson (ToJSON(..), (.=))
+import Data.Aeson (FromJSON, fromJSON, ToJSON(..), (.=))
 import qualified Data.Aeson as JSON
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BSL
+import qualified Data.HashMap.Strict as HM
 import Data.Pool (Pool, createPool)
 import qualified Data.Pool as Pool
+import Data.Text (Text)
+import Data.Word
 import Database.PostgreSQL.Simple (Connection)
 import qualified Database.PostgreSQL.Simple as PSQL
 import qualified Database.PostgreSQL.Simple.Transaction as PSQL
@@ -71,7 +82,9 @@ import qualified Network.HTTP.Types.Status as HTTP
 import Snap.Core (Snap)
 import qualified Snap.Core as Snap
 
-class IsCtx ctx where
+-- | Don't be daunted! The only thing you need to provide (i.e. that doesn't
+--     have a default value) is 'ctxConnectionPool'
+class ApiErr (CtxErrType ctx) => IsCtx ctx where
    ctxConnectionPool :: ctx -> Pool Connection
 
    ctxGetReadOnlyMode :: ctx -> IO Bool
@@ -80,11 +93,39 @@ class IsCtx ctx where
    ctx_wrapSuccess :: ToJSON x => ctx -> x -> JSON.Value
    ctx_wrapSuccess _ x = JSON.object ["result" .= x]
 
-   ctx_err_inReadOnlyMode :: ctx -> ErrResult
-   ctx_err_inReadOnlyMode _ = errResult DefaultErrors_ReadOnlyMode
+   type CtxErrType ctx
+   type instance CtxErrType ctx = DefaultApiErr
+
+-- This just forces the error type like a Proxy
+ctxErr :: IsCtx ctx => ctx -> (CtxErrType ctx) -> (CtxErrType ctx)
+ctxErr _ x = x
 
 class ApiErr apiErr where
    errResult :: apiErr -> ErrResult
+
+   -- | The request object is missing a required key.
+   --   E.g. the request is {"first": "Tom"} but we need both a "first" and a
+   --   "last"
+   apiErr_missingRequestKey :: Text -> apiErr
+
+   -- | We can't process the request because the request is malformed JSON or
+   --   not JSON at all
+   apiErr_requestNotJSON :: apiErr
+
+   -- | The request *is* JSON, but not an object (e.g. maybe it's an array
+   --   or a number, but we need an object)
+   apiErr_requestNotJSONObject :: apiErr
+
+   -- | It's a JSON object but it's malformed somehow (e.g. maybe it's got the
+   --   wrong keys). In other words, we can't 'fromJSON' it successfully.
+   --
+   --   (The 'Text' is the key of the malformed value)
+   apiErr_malformedRequestValue :: Text -> JSON.Value -> apiErr
+
+   -- | A 500 internal server error
+   apiErr_unexpectedError :: Text -> apiErr
+
+   apiErr_inReadOnlyMode :: apiErr
 
 data ErrResult
    = ErrResult HTTP.Status JSON.Value
@@ -98,21 +139,59 @@ instance Show ErrResult where
       "ErrResult "++show status++" "++show (JSON.encode j)
 -}
 
-instance ApiErr ErrResult where
-   errResult x = x
-
-data DefaultErrors
-   = DefaultErrors_ReadOnlyMode
+data DefaultApiErr
+   = DefaultApiErr_ReadOnlyMode
+   | DefaultApiErr_MissingRequestKey Text
+   | DefaultApiErr_RequestNotJSON
+   | DefaultApiErr_RequestNotJSONObject
+   | DefaultApiErr_MalformedRequestValue Text JSON.Value
+   | DefaultApiErr_UnexpectedError Text
+   | DefaultApiErr_Custom HTTP.Status String
  deriving (Show, Eq)
 
-instance ApiErr DefaultErrors where
-   errResult :: DefaultErrors -> ErrResult
-   errResult = \case
-      DefaultErrors_ReadOnlyMode -> ErrResult HTTP.serviceUnavailable503 $
-         JSON.object [
-              "errorCode" .= (0 :: Int)
-            , "errorMessage" .= JSON.String "This action is unavailable in read-only mode"
-            ]
+instance ApiErr DefaultApiErr where
+   apiErr_inReadOnlyMode = DefaultApiErr_ReadOnlyMode
+   apiErr_missingRequestKey = DefaultApiErr_MissingRequestKey
+   apiErr_requestNotJSON = DefaultApiErr_RequestNotJSON
+   apiErr_requestNotJSONObject = DefaultApiErr_RequestNotJSONObject
+   apiErr_malformedRequestValue = DefaultApiErr_MalformedRequestValue
+   apiErr_unexpectedError = DefaultApiErr_UnexpectedError
+
+   errResult :: DefaultApiErr -> ErrResult
+   errResult = defaultApiErrResult
+
+defaultApiErrResult :: DefaultApiErr -> ErrResult
+defaultApiErrResult err =
+   ErrResult status  $
+      JSON.object [
+           "errorCode" .= (code :: Int)
+         , "errorMessage" .= msg
+         , "errorVals" .= (vals :: [(Text, JSON.Value)])
+         ]
+ where
+    (code, status, msg, vals) = case err of
+       DefaultApiErr_ReadOnlyMode ->
+          (0, HTTP.serviceUnavailable503, "This action is unavailable in read-only mode", [])
+       DefaultApiErr_UnexpectedError t ->
+          (1, HTTP.internalServerError500, "An unexpected error occurred", [
+               "text" .= t
+             ])
+       DefaultApiErr_MissingRequestKey k ->
+          (2, HTTP.unprocessableEntity422, "Required key not present: "++show k, [
+               "key" .= k
+             ])
+       DefaultApiErr_RequestNotJSON ->
+          (3, HTTP.unprocessableEntity422, "Non-JSON message body", [])
+
+       DefaultApiErr_RequestNotJSONObject ->
+          (4, HTTP.unprocessableEntity422, "Message body is not a JSON object", [])
+
+       DefaultApiErr_MalformedRequestValue k v ->
+          (5, HTTP.unprocessableEntity422, "Malformed value: "++show k, [
+               "key" .= k, "value" .= v
+             ])
+       DefaultApiErr_Custom s t ->
+          (6, s, t, [])
 
 -- | How we construct responses. You probably don't want to be constructing or
 --   inspecting them by hand; instead you can use 'rspGood', 'rspBadRollback', etc.
@@ -185,7 +264,8 @@ rspIsGood :: Rsp -> Bool
 rspIsGood (Rsp _ payload) = case payload of
    RspPayload_Good {} -> True
    RspPayload_Bad {} -> False
-   RspPayload_Custom httpStatus _ _ -> httpStatus == HTTP.ok200
+   RspPayload_Custom httpStatus _ _ ->
+      httpStatus == HTTP.ok200
    RspPayload_Empty -> True
 
 instance Show Rsp where
@@ -235,7 +315,7 @@ inTransactionMode :: IsCtx ctx => ctx -> PSQL.IsolationLevel -> PSQL.ReadWriteMo
 inTransactionMode ctx isolationLevel' readWriteMode' actionThatReturnsAResponse = do
    readOnlyMode <- liftIO $ ctxGetReadOnlyMode ctx
    when (readOnlyMode && (readWriteMode' /= PSQL.ReadOnly)) $
-      errorEarlyCode $ ctx_err_inReadOnlyMode ctx
+      errorEarlyCode $ ctxErr ctx apiErr_inReadOnlyMode
 
    inTransaction_internal ctx isolationLevel' readWriteMode' actionThatReturnsAResponse
 
@@ -273,16 +353,19 @@ pureRsp ctx (Rsp _ payload) = case payload of
 -- Take a look at how postgresql-simple does it:
 rollback_ :: Connection -> IO ()
 rollback_ conn =
-   PSQL.rollback conn `E.catch` ((\_ -> return ()) :: IOError -> IO ())
+   PSQL.rollback conn
+      `E.catch` ((\_ -> return ()) :: IOError -> IO ())
 
 writeLBSSuccess_dontUseThis :: BS.ByteString -> BSL.ByteString -> Snap ()
 writeLBSSuccess_dontUseThis contentType b = do
-   Snap.modifyResponse $ Snap.setHeader "Content-Type" contentType
+   Snap.modifyResponse $
+      Snap.setHeader "Content-Type" contentType
    Snap.writeLBS b
 
 writeJSON :: ToJSON x => x -> Snap ()
 writeJSON x = do
-   Snap.modifyResponse $ Snap.setHeader "Content-Type" "application/json"
+   Snap.modifyResponse $
+      Snap.setHeader "Content-Type" "application/json"
    Snap.writeLBS $ JSON.encode $ x
 
 -- | NOTE: be very careful to not use this with any setup/teardown block like 'withTransaction'
@@ -305,3 +388,33 @@ writeApiErr (errResult -> (ErrResult httpStatus responseVal)) = do
    Snap.modifyResponse $ Snap.setResponseCode $
       HTTP.statusCode httpStatus
    writeJSON $ toJSON responseVal
+
+-- | Like (.!?) but returns a 422 error (with 'errorEarly') if the key isn't
+--   present
+(.!) :: (IsCtx ctx, FromJSON x) => ReqObject ctx -> Text -> Snap x
+ro@(ReqObject ctx _) .! k = (ro .!? k) >>= \case
+   Nothing -> errorEarlyCode $ ctxErr ctx $ apiErr_missingRequestKey k
+   Just x -> pure x
+
+-- | Get a JSON value from the request object, and give a HTTP 422
+--   response ('errorEarly') if the value is malformed (not able to be decoded).
+--   If it's not present, don't fail: just give us a Nothing
+(.!?) :: (IsCtx ctx, FromJSON x) => ReqObject ctx -> Text -> Snap (Maybe x)
+(ReqObject ctx hm) .!? k = case HM.lookup k hm of
+   Nothing -> pure Nothing
+   Just v -> case fromJSON v of
+      JSON.Success x -> pure (Just x)
+      _ -> errorEarlyCode $ ctxErr ctx $ apiErr_malformedRequestValue k v
+
+data ReqObject ctx
+   = ReqObject ctx (HM.HashMap Text JSON.Value)
+
+reqObject :: IsCtx ctx => ctx -> Snap (ReqObject ctx)
+reqObject ctx = reqObject' ctx 2048
+
+reqObject' :: IsCtx ctx => ctx -> Word64 -> Snap (ReqObject ctx)
+reqObject' ctx size =
+   (JSON.decode <$> Snap.readRequestBody size) >>= \case
+      Nothing -> errorEarlyCode $ ctxErr ctx apiErr_requestNotJSON
+      Just (JSON.Object o) -> pure $ ReqObject ctx o
+      Just _ -> errorEarlyCode $ ctxErr ctx apiErr_requestNotJSONObject
