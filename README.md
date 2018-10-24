@@ -23,6 +23,7 @@ import Database.PostgreSQL.Simple
  -- For our automatic JSON instance:
 import GHC.Generics (Generic)
 import Gingersnap.Core
+import Network.HTTP.Types.Status (internalServerError500)
 import Snap.Core
 -- From the 'snap-server' package:
 import Snap.Http.Server (quickHttpServe)
@@ -82,6 +83,7 @@ main = do
    quickHttpServe $ route [
         ("one", one ctx)
       , ("two", two ctx)
+      , ("three", three ctx)
       ]
 ```
 
@@ -158,13 +160,62 @@ action we pass to inTransaction is passed a Connection and is in IO, not in Snap
     only roll back if there's an exception, and in contrast to manually beginning
     a transaction, which provides no check that we properly commit or rollback
     (e.g. we could forget to commit/rollback in one case among many in a complicated
-    statement)
+    branching expression)
 
+## Not everything's rspGood
+
+What if we don't want to send a successful ok200 message? Or maybe we don't even
+want to commit our transaction? These might come in handy then:
+
+    rspBadCommit :: ApiErr ae => ae -> Rsp
+    rspBadRollback :: ApiErr ae => ae -> Rsp
+
+(`rspBad` is an alias for `rspBadRollback`)
+
+`ApiErr` is a simple typeclass that ensures our error type can be converted to
+a HTTP status code and JSON value.
+
+We don't need to (and won't be) exploring the `ApiErr` typeclass here directly
+, since we've got a good default instance with the `DefaultApiErr` type.
+
+```haskell
+three :: Ctx -> Snap ()
+three ctx =
+   inTransaction ctx $ \conn -> do
+      [Only d] <- query_ conn " SELECT random () "
+      pure $ if d >= (0.5 :: Double)
+         then rspGood d
+         else rspBad $ DefaultApiErr_Custom internalServerError500 $
+            "number too small: "++ show d
+```
+
+    $ curl -v 'localhost:8000/three'
+    [...]
+    < HTTP/1.1 500 Internal Server Error
+    [...]
+    {"errorCode":6,"errorVals":[],"errorMessage":"number too small: 0.163489528931677"}
+    $ curl -v 'localhost:8000/three'
+    [...]
+    < HTTP/1.1 200 OK
+    [...]
+    {"result":0.594665706157684}
+
+If you'd like to write your own `ApiErr` instance (which you probably should if
+you're building something "real":
+  - The definition of "errResult" for "DefaultApiErr" might be a good guide
+    for how to get a consistent JSON result.
+  - You'll want to make that type the "CtxErrType" associated type for IsCtx
+
+## Not everything's JSON
+
+A JSON API is usually JSON but if you'd like to e.g. send a CSV or a file there
+are functions like `rspGoodCSV` and (the most general) `rspGoodLBS`.
+
+If you don't see a function you need it's easy to define your own.
 
 ## Other things to discover
 
 This tutorial is a work in progress, and these'll be the next concepts to be
 touched on:
 
-  - "Not everything's rspGood": rspBadRollback, ApiErr, and others
-  - reqObject and (.!) for consuming JSON
+  - reqObject and (.!) for receiving JSON

@@ -25,20 +25,28 @@ module Gingersnap.Core (
 
    -- * DB Transactions
    , inTransaction
+   , inTransactionMode
    , inTransaction_readOnly
    , inTransaction_override
-   , inTransactionMode
    , rspIsGood
 
    -- * IsCtx
    , IsCtx(..)
 
+   -- * JSON requests
+   , reqObject
+   , reqObject'
+   , (.!)
+   , (.!?)
+   , ReqObject(..)
+
    -- * Errors
+   , errorEarlyCode
+
    , ApiErr(..)
    , ErrResult(..)
    , DefaultApiErr(..)
 
-   , errorEarlyCode
    , ctxErr
 
    -- * Internals
@@ -46,12 +54,6 @@ module Gingersnap.Core (
    --   block people from inspecting them if they like
    , RspPayload(..)
    , ShouldCommitOrRollback(..)
-
-   , reqObject
-   , reqObject'
-   , (.!)
-   , (.!?)
-   , ReqObject(..)
 
    -- * Reexports, for convenience
    , Pool
@@ -105,8 +107,8 @@ class ApiErr apiErr where
    errResult :: apiErr -> ErrResult
 
    -- | The request object is missing a required key.
-   --   E.g. the request is {"first": "Tom"} but we need both a "first" and a
-   --   "last"
+   --   E.g. the request is @{"first": "Tom"}@ but we need both a @"first"@ and a
+   --   @"last"@
    apiErr_missingRequestKey :: Text -> apiErr
 
    -- | We can't process the request because the request is malformed JSON or
@@ -290,8 +292,8 @@ inTransaction :: IsCtx ctx => ctx -> (Connection -> IO Rsp) -> Snap ()
 inTransaction ctx actionThatReturnsAnRsp = do
    inTransactionMode ctx PSQL.Serializable PSQL.ReadWrite actionThatReturnsAnRsp
 
--- | An endpoint that uses 'inTransaction_readOnly' will keep responding even
---   when the server is in read-only mode.
+-- | Creates a read-only transaction and will keep responding even if the
+--   server's in read-only mode.
 -- 
 --   Note that you the programmer are asserting the DB queries are read-only.
 --   There's nothing in this library or in postgresql-simple which statically
@@ -312,6 +314,10 @@ inTransaction_override :: IsCtx ctx => ctx -> (Connection -> IO Rsp) -> Snap ()
 inTransaction_override ctx action =
    inTransaction_internal ctx PSQL.Serializable PSQL.ReadWrite action
 
+-- | The most general version of 'inTransaction'.
+-- 
+--   An endpoint that uses 'ReadOnly' will keep responding even when the server
+--   is in read-only mode.
 inTransactionMode :: IsCtx ctx => ctx -> PSQL.IsolationLevel -> PSQL.ReadWriteMode -> (Connection -> IO Rsp) -> Snap ()
 inTransactionMode ctx isolationLevel' readWriteMode' actionThatReturnsAResponse = do
    readOnlyMode <- liftIO $ ctxGetReadOnlyMode ctx
