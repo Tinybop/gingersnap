@@ -1,5 +1,5 @@
 name:                gingersnap
-version:             0.2.1.0
+version:             0.2.1.1
 synopsis:            snap-core + aeson + postgresql-simple = delicious
 description:
   JSON API idioms for snap-core, preventing DB connection leaks.
