@@ -18,7 +18,7 @@ A few imports we'll need for this tutorial:
 ```haskell
 {-# LANGUAGE DeriveGeneric, OverloadedStrings #-}
 
-import Data.Aeson (ToJSON)
+import Data.Aeson (ToJSON, (.=))
 import Database.PostgreSQL.Simple
  -- For our automatic JSON instance:
 import GHC.Generics (Generic)
@@ -182,23 +182,27 @@ We don't need to (and won't be) exploring the `ApiErr` typeclass here directly
 three :: Ctx -> Snap ()
 three ctx =
    inTransaction ctx $ \conn -> do
-      [Only d] <- query_ conn " SELECT random () "
-      pure $ if d >= (0.5 :: Double)
-         then rspGood d
-         else rspBad $ DefaultApiErr_Custom internalServerError500 $
-            "number too small: "++ show d
+      [Only n] <- query_ conn " SELECT random () "
+      pure $ if n >= (0.5 :: Double)
+         then rspGood n
+         else rspBad $
+            DefaultApiErr_Custom
+               internalServerError500
+               "'n' too small"
+               [("n" .= n)]
 ```
 
-    $ curl -v 'localhost:8000/three'
-    [...]
-    < HTTP/1.1 500 Internal Server Error
-    [...]
-    {"errorCode":6,"errorVals":[],"errorMessage":"number too small: 0.163489528931677"}
     $ curl -v 'localhost:8000/three'
     [...]
     < HTTP/1.1 200 OK
     [...]
     {"result":0.594665706157684}
+
+    $ curl -v 'localhost:8000/three'
+    [...]
+    < HTTP/1.1 500 Internal Server Error
+    [...]
+    {"errorCode":6,"errorVals":[["n",0.250084751285613]],"errorMessage":"'n' too small"}
 
 If you'd like to write your own `ApiErr` instance (which you probably should if
 you're building something "real":

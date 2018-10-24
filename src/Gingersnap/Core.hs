@@ -149,7 +149,7 @@ data DefaultApiErr
    | DefaultApiErr_RequestNotJSONObject
    | DefaultApiErr_MalformedRequestValue Text JSON.Value
    | DefaultApiErr_UnexpectedError Text
-   | DefaultApiErr_Custom HTTP.Status String
+   | DefaultApiErr_Custom HTTP.Status String [(Text, JSON.Value)]
  deriving (Show, Eq)
 
 instance ApiErr DefaultApiErr where
@@ -193,8 +193,8 @@ defaultApiErrResult err =
           (5, HTTP.unprocessableEntity422, "Malformed value: "++show k, [
                "key" .= k, "value" .= v
              ])
-       DefaultApiErr_Custom s t ->
-          (6, s, t, [])
+       DefaultApiErr_Custom s t vals ->
+          (6, s, t, vals)
 
 -- | How we construct responses. You probably don't want to be constructing or
 --   inspecting them by hand; instead you can use 'rspGood', 'rspBadRollback', etc.
