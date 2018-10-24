@@ -51,6 +51,7 @@ module Gingersnap.Core (
    , reqObject'
    , (.!)
    , (.!?)
+   , ReqObject(..)
 
    -- * Reexports, for convenience
    , Pool
