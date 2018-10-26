@@ -1,8 +1,10 @@
 name:                gingersnap
-version:             0.2.1.2
-synopsis:            snap-core + aeson + postgresql-simple = delicious
+version:             0.2.2.0
+synopsis:
+  Tools for consistent and safe JSON APIs with snap-core and postgresql-simple
 description:
-  JSON API idioms for snap-core, preventing DB connection leaks.
+  Straightforward JSON API idioms for snap-core and postgresql-simple, that
+  prevent DB connection leaks.
   See the README for a tutorial and example use.
 license:             BSD3
 license-file:        LICENSE
@@ -30,6 +32,7 @@ library
       base >=4.5 && <5
     , aeson
     , bytestring
+    , deepseq
     , http-types
     , postgresql-simple
     , resource-pool

@@ -1,5 +1,7 @@
 {-# LANGUAGE
-     ExistentialQuantification
+     BangPatterns
+   , DeriveGeneric
+   , ExistentialQuantification
    , FlexibleContexts
    , InstanceSigs
    , LambdaCase
@@ -65,6 +67,7 @@ module Gingersnap.Core (
    -- , module Snap.Core
    ) where
 
+import Control.DeepSeq -- (NFData(rnf), deepseq)
 import qualified Control.Exception as E
 import Control.Monad
 import Control.Monad.IO.Class (liftIO)
@@ -77,10 +80,12 @@ import qualified Data.HashMap.Strict as HM
 import Data.Pool (Pool, createPool)
 import qualified Data.Pool as Pool
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Word
 import Database.PostgreSQL.Simple (Connection)
 import qualified Database.PostgreSQL.Simple as PSQL
 import qualified Database.PostgreSQL.Simple.Transaction as PSQL
+import GHC.Generics (Generic)
 import qualified Network.HTTP.Types.Status as HTTP
 import Snap.Core (Snap)
 import qualified Snap.Core as Snap
@@ -126,13 +131,28 @@ class ApiErr apiErr where
    apiErr_malformedRequestValue :: Text -> JSON.Value -> apiErr
 
    -- | A 500 internal server error
+   -- 
+   --   The Text value is the error message. You may want different behavior in
+   --     development vs. production, e.g. not showing internal errors in prod
    apiErr_unexpectedError :: Text -> apiErr
 
    apiErr_inReadOnlyMode :: apiErr
 
 data ErrResult
    = ErrResult HTTP.Status JSON.Value
- deriving (Show, Eq)
+ deriving (Show, Eq) -- , Generic)
+
+instance NFData ErrResult where
+   -- ~~[Forcing HTTP.Status]~~
+   -- There's no NFData instance for HTTP.Status, and I don't want to make an
+   --   orphan instance for one, so we take it apart by hand instead:
+   rnf (ErrResult (HTTP.Status code msg) v) =
+      rnf code `seq` rnf msg `seq` rnf v
+
+{-
+deriving instance Generic HTTP.Status
+instance NFData HTTP.Status
+-}
 
 -- Might be nice, since we don't have a Read.
 -- But probably better for a 'pretty*' function
@@ -153,12 +173,18 @@ data DefaultApiErr
  deriving (Show, Eq)
 
 instance ApiErr DefaultApiErr where
-   apiErr_inReadOnlyMode = DefaultApiErr_ReadOnlyMode
-   apiErr_missingRequestKey = DefaultApiErr_MissingRequestKey
-   apiErr_requestNotJSON = DefaultApiErr_RequestNotJSON
-   apiErr_requestNotJSONObject = DefaultApiErr_RequestNotJSONObject
-   apiErr_malformedRequestValue = DefaultApiErr_MalformedRequestValue
-   apiErr_unexpectedError = DefaultApiErr_UnexpectedError
+   apiErr_inReadOnlyMode =
+      DefaultApiErr_ReadOnlyMode
+   apiErr_missingRequestKey =
+      DefaultApiErr_MissingRequestKey
+   apiErr_requestNotJSON =
+      DefaultApiErr_RequestNotJSON
+   apiErr_requestNotJSONObject =
+      DefaultApiErr_RequestNotJSONObject
+   apiErr_malformedRequestValue =
+      DefaultApiErr_MalformedRequestValue
+   apiErr_unexpectedError =
+      DefaultApiErr_UnexpectedError
 
    errResult :: DefaultApiErr -> ErrResult
    errResult = defaultApiErrResult
@@ -193,8 +219,8 @@ defaultApiErrResult err =
           (5, HTTP.unprocessableEntity422, "Malformed value: "++show k, [
                "key" .= k, "value" .= v
              ])
-       DefaultApiErr_Custom s t vals ->
-          (6, s, t, vals)
+       DefaultApiErr_Custom s t vs ->
+          (6, s, t, vs)
 
 -- | How we construct responses. You probably don't want to be constructing or
 --   inspecting them by hand; instead you can use 'rspGood', 'rspBadRollback', etc.
@@ -203,6 +229,9 @@ data Rsp
      rspShouldCommit :: ShouldCommitOrRollback
    , rspPayload :: RspPayload
    }
+ deriving (Generic)
+
+instance NFData Rsp
 
 data RspPayload
    = forall x. ToJSON x => RspPayload_Good x
@@ -211,10 +240,23 @@ data RspPayload
    | RspPayload_Custom HTTP.Status BS.ByteString BSL.ByteString
    | RspPayload_Empty -- This might be a dupe with '_Custom' but it's nice to have
 
+instance NFData RspPayload where
+   rnf = \case
+      RspPayload_Empty -> ()
+      -- RspPayload_Custom a b c -> (RspPayload_Custom $!! a <$!!> b <$!!> c) `seq` ()
+      -- TODO: i don't need this '_ $!!' rite?:
+      RspPayload_Good x -> (RspPayload_Good $!! (force $ toJSON x)) `seq` ()
+      RspPayload_Bad e -> rnf $ errResult e
+      RspPayload_Custom (HTTP.Status a b) c d ->
+         -- See the note above about ~~[Forcing HTTP.Status]~~ :
+         rnf a `seq` rnf b `seq` rnf c `seq` rnf d
+
 data ShouldCommitOrRollback
    = ShouldCommit
    | ShouldRollback
- deriving (Show, Eq)
+ deriving (Show, Eq, Generic)
+
+instance NFData ShouldCommitOrRollback
 
 -- | This means everything's succeeded. We should commit DB changes and
 --   return a success object
@@ -332,18 +374,21 @@ inTransaction_internal :: IsCtx ctx => ctx -> PSQL.IsolationLevel -> PSQL.ReadWr
 inTransaction_internal ctx isolationLevel' readWriteMode' actionThatReturnsAResponse = do
 
    let transactMode = PSQL.TransactionMode isolationLevel' readWriteMode'
-   rsp <- liftIO $ Pool.withResource (ctxConnectionPool ctx) $ \conn ->
-      E.mask $ \restore -> do
-         PSQL.beginMode transactMode conn
-         r <- restore (actionThatReturnsAResponse conn)
-            `E.onException` rollback_ conn
-         (case rspShouldCommit r of
-            ShouldCommit -> PSQL.commit conn
-            -- Note it is safe to call rollback on a read-only transaction:
-            -- https://www.postgresql.org/message-id/26036.1114469591%40sss.pgh.pa.us
-            ShouldRollback -> rollback_ conn
-            ) `E.onException` rollback_ conn -- To be safe. E.g. what if inspecting 'r' errors?
-         pure r
+   rsp <- liftIO $
+      (Pool.withResource (ctxConnectionPool ctx) $ \conn ->
+         E.mask $ \restore -> do
+            PSQL.beginMode transactMode conn
+            !r <- restore (force <$> actionThatReturnsAResponse conn)
+               `E.onException` rollback_ conn
+            (case rspShouldCommit r of
+               ShouldCommit -> PSQL.commit conn
+               -- Note it is safe to call rollback on a read-only transaction:
+               -- https://www.postgresql.org/message-id/26036.1114469591%40sss.pgh.pa.us
+               ShouldRollback -> rollback_ conn
+               ) `E.onException` rollback_ conn -- To be safe. E.g. what if inspecting 'r' errors?
+            pure r)
+               `E.catch` (\e@(E.SomeException {}) -> pure $ rspBad $
+                  ctxErr ctx $ apiErr_unexpectedError $ T.pack $ show e)
    pureRsp ctx rsp
 
 -- | Sometimes you don't need a DB connection at all!
@@ -390,6 +435,7 @@ errorEarlyCode err = do
    Snap.getResponse >>= Snap.finishWith
 -- Difference with 'pureRsp . rspBad' is that it actually 'finishWith's
 
+-- TODO: alias to 'errorCode'?:
 writeApiErr :: ApiErr ae => ae -> Snap ()
 writeApiErr (errResult -> (ErrResult httpStatus responseVal)) = do
    Snap.modifyResponse $ Snap.setResponseCode $

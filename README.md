@@ -177,6 +177,8 @@ a HTTP status code and JSON value.
 
 We don't need to (and won't be) exploring the `ApiErr` typeclass here directly
 , since we've got a good default instance with the `DefaultApiErr` type.
+It'll make us write a little more (e.g. explicitly stating the status code of
+our error), but it's quick and easy.
 
 ```haskell
 three :: Ctx -> Snap ()
@@ -223,3 +225,4 @@ This tutorial is a work in progress, and these'll be the next concepts to be
 touched on:
 
   - reqObject and (.!) for receiving JSON
+  - returning JSON even when throwing an error
