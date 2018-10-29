@@ -420,15 +420,12 @@ writeJSON x = do
       Snap.setHeader "Content-Type" "application/json"
    Snap.writeLBS $ JSON.encode $ x
 
--- | NOTE: be very careful to not use this with any setup/teardown block like 'withTransaction'
---      - causes resource leaks
---      - BUT! This should never happen to you because all your DB code should
---        use 'inTransaction'!
--- 
---   NOTE: use 403 forbidden instead of unauthorized - unauth means not logged in at all
---
---   Also note this returns any 'Snap x' so you can use it like a throw anywhere
+-- | This returns any 'Snap x' so you can use it like a throw anywhere
 --     in your snap code
+-- 
+--   NOTE: if you ever use 's 'withTransaction' (which we don't recommend!)
+--     this function has the same caveats as 'finishWith'
+
 errorEarlyCode :: ApiErr ae => ae -> Snap x
 errorEarlyCode err = do
    writeApiErr err
