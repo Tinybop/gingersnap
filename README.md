@@ -1,12 +1,12 @@
 # Gingersnap
 
-What _is_ Gingersnap? Not a web framework: that's Snap Core's job.
+Gingersnap's not a web framework: that's `snap-core`'s job.
 More a set of lightweight idioms for building a resource-safe JSON API with
-Aeson and postgresql-simple.
+`postgresql-simple`.
 
 As it's just a set of idioms, it's easy to only use 'em where you need 'em.
 An app could have only a single endpoint that uses Gingersnap, with the rest
-using plain Snap Core.
+using plain `snap-core`.
 
 How do we use it? This README is also a Literate Haskell file so it's a full
 example you can run with markdown-unlit. Let's get started:
@@ -88,7 +88,7 @@ main = do
 ```
 
 Other than "ctx", this isn't Gingersnap-specific at all: just a simple
-Snap Core server. "makeCtx" is a function we define ourselves. It creates a
+`snap-core` server. "makeCtx" is a function we define ourselves. It creates a
 value of type "Ctx", which we define ourselves, and which is an instance of
 "IsCtx".
 
