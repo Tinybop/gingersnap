@@ -12,15 +12,15 @@
 
 module Gingersnap.Core (
    -- * Rsp
-     Rsp(..)
-
-   , rspGood
+     rspGood
    , rspBad
    , rspBadCommit
    , rspBadRollback
    , rspGoodCSV
    , rspGoodLBS
    , rspEmptyGood
+   , Rsp(..)
+
 
    -- * pureRsp
    , pureRsp
@@ -321,11 +321,7 @@ instance Show Rsp where
          RspPayload_Empty -> "Empty"
          RspPayload_Custom a b c -> "(Custom "++show (a,b,c)++")"
 
--- | *If you hit the DB, use this function!*
--- 
---   This is a lot like 'withTransaction', but it allows us to rollback if we
---   want, without throwing an error.
---   (Don't use 'withTransaction'!)
+-- | _If you hit the DB, use this function!_
 -- 
 --   NOTE this is for IO actions, not Snap actions. This is to ensure we can't
 --   call e.g. 'finishEarly' and never hit the 'end transaction' code!
@@ -344,7 +340,7 @@ inTransaction_readOnly :: IsCtx ctx => ctx -> (Connection -> IO Rsp) -> Snap ()
 inTransaction_readOnly ctx f =
    inTransactionMode ctx PSQL.Serializable PSQL.ReadOnly f
 
--- | YOU SHOULD ONLY USE THIS ONCE
+-- | _You should only use this once!_
 -- 
 --   This lets you do a write transaction during read-only mode (not a
 --     read-only transaction! A time where 'ctxGetReadOnlyMode' would return

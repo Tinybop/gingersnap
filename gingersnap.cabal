@@ -1,5 +1,5 @@
 name:                gingersnap
-version:             0.2.2.2
+version:             0.2.2.3
 synopsis:
   Tools for consistent and safe JSON APIs with snap-core and postgresql-simple
 description:
