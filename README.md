@@ -6,7 +6,7 @@ More a set of lightweight idioms for building a resource-safe JSON API with
 
 As it's just a set of idioms, it's easy to only use 'em where you need 'em.
 An app could have only a single endpoint that uses Gingersnap, with the rest
-using plain `snap-core`.
+using plain `snap` or `snap-core`.
 
 How do we use it? This README is also a Literate Haskell file so it's a full
 example you can run with markdown-unlit. Let's get started:
@@ -35,14 +35,14 @@ Now that we've got our imports, let's jump into defining an endpoint. We'll
 define a little bit of setup code later on in the file.
 
 ```haskell
-data SomeData = SomeData Int Bool
+data Character = Character { name :: String, age :: Int }
  deriving (Show, Generic)
 
-instance ToJSON SomeData
+instance ToJSON Character
 
 one :: Ctx -> Snap ()
 one ctx =
-   pureRsp ctx $ rspGood $ SomeData 5 True
+   pureRsp ctx $ rspGood $ Character { name = "Yoda", age = 900 }
 ```
 
 You can run the code from this file with
@@ -57,7 +57,7 @@ And calling "main". In another window, if you call:
 
 You should get back:
 
-    {"result":[5,true]}
+    {"result":{"age":900,"name":"Yoda"}}
 
 A few things to notice:
   - The endpoint takes as an argument a "Ctx". We'll see the definition of that
@@ -137,12 +137,12 @@ Now that we've got (through Ctx) a DB connection pool, let's query the DB:
 two :: Ctx -> Snap ()
 two ctx = do
    inTransaction ctx $ \conn -> do
-      [Only x] <- query_ conn " SELECT 2 + 2 "
-      pure $ rspGood $ SomeData x True
+      [Only x] <- query_ conn " SELECT 3 + 3 "
+      pure $ rspGood $ Character { name = "Calvin", age = x }
 ```
 
     $ curl 'localhost:8000/two'
-    {"result":[4,true]}
+    {"result":{"age":6,"name":"Calvin"}} ~ $
 
 Nice! This uses "inTransaction", another core tool in Gingersnap:
 
