@@ -18,12 +18,13 @@ A few imports we'll need for this tutorial:
 ```haskell
 {-# LANGUAGE DeriveGeneric, OverloadedStrings #-}
 
-import Data.Aeson (ToJSON, (.=))
+import Control.Monad (when)
+import Data.Aeson (ToJSON, (.=), FromJSON)
 import Database.PostgreSQL.Simple
  -- For our automatic JSON instance:
 import GHC.Generics (Generic)
 import Gingersnap.Core
-import Network.HTTP.Types.Status (internalServerError500)
+import Network.HTTP.Types.Status (internalServerError500, unprocessableEntity422)
 import Snap.Core
 -- From the 'snap-server' package:
 import Snap.Http.Server (quickHttpServe)
@@ -39,6 +40,7 @@ data Character = Character { name :: String, age :: Int }
  deriving (Show, Generic)
 
 instance ToJSON Character
+instance FromJSON Character
 
 one :: Ctx -> Snap ()
 one ctx =
@@ -84,6 +86,7 @@ main = do
         ("one", one ctx)
       , ("two", two ctx)
       , ("three", three ctx)
+      , ("four", method POST $ four ctx)
       ]
 ```
 
@@ -142,7 +145,7 @@ two ctx = do
 ```
 
     $ curl 'localhost:8000/two'
-    {"result":{"age":6,"name":"Calvin"}} ~ $
+    {"result":{"age":6,"name":"Calvin"}}
 
 Nice! This uses "inTransaction", another core tool in Gingersnap:
 
@@ -161,6 +164,12 @@ action we pass to inTransaction is passed a Connection and is in IO, not in Snap
     a transaction, which provides no check that we properly commit or rollback
     (e.g. we could forget to commit/rollback in one case among many in a complicated
     branching expression)
+
+If there's an error while running the `(Connection -> IO Rsp)` action:
+  - The transaction will be rolled back
+  - The `Connection` will be returned to the connection pool
+  - A JSON error response will be returned. If you're defining your own `ApiErr`
+    instance, that'll be `apiErr_unexpectedError`
 
 ## Not everything's rspGood
 
@@ -204,13 +213,52 @@ three ctx =
     [...]
     < HTTP/1.1 500 Internal Server Error
     [...]
-    {"errorCode":6,"errorVals":[["n",0.250084751285613]],"errorMessage":"'n' too small"}
+    {"errorCode":6,"errorVals":[["n",0.2500847]],"errorMessage":"'n' too small"}
 
 If you'd like to write your own `ApiErr` instance (which you probably should if
 you're building something "real":
   - The definition of "errResult" for "DefaultApiErr" might be a good guide
     for how to get a consistent JSON result.
   - You'll want to make that type the "CtxErrType" associated type for IsCtx
+
+## Getting JSON
+
+We've sent a lot of JSON, but let's receive some!
+
+```haskell
+four :: Ctx -> Snap ()
+four ctx = do
+   o <- reqObject ctx
+   character <- o .! "character"
+   amtToAge <- o .! "amt_to_age"
+
+   when (amtToAge < (0 :: Int)) $
+      errorEarlyCode $
+         DefaultApiErr_Custom unprocessableEntity422 "Can't age backwards!" []
+
+   inTransaction ctx $ \conn -> do
+      [Only newAge] <- query conn " SELECT ? + ? " (age character, amtToAge)
+      pure $ rspGood $ character { age = newAge }
+```
+
+(Note with a custom `ApiErr` instance you won't have to specify the HTTP
+response like 'unprocessableEntity422' etc.)
+
+    $ curl 'localhost:8000/four' --data '{"character": {"name": "Calvin", "age": 6}, "amt_to_age": 1}'
+
+    {"result":{"age":7,"name":"Calvin"}}
+
+`(.!)` requires that the value be present and short-circuits with a JSON error
+if it's not or if it's malformed (i.e. if `fromJSON` would fail)
+
+`(.!?)` doesn't require the value to be present - it returns a `Maybe` value. If
+the key is present but the value is malformed, however, it'll return a JSON error.
+
+A few things to note:
+  - If everything's not okay with the JSON inputs to the function, we never even
+    make it to the DB.
+  - `errorEarlyCode` is like (and uses) Snap's `finishWith`, but we don't have
+    to worry about a resource leak since `inTransaction` is separate
 
 ## Not everything's JSON
 
@@ -219,10 +267,10 @@ are functions like `rspGoodCSV` and (the most general) `rspGoodLBS`.
 
 If you don't see a function you need it's easy to define your own.
 
+
 ## Other things to discover
 
 This tutorial is a work in progress, and these'll be the next concepts to be
 touched on:
 
-  - reqObject and (.!) for receiving JSON
   - returning JSON even when throwing an error
