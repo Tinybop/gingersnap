@@ -375,6 +375,7 @@ inTransaction_internal ctx isolationLevel' readWriteMode' actionThatReturnsAResp
          E.mask $ \restore -> do
             PSQL.beginMode transactMode conn
             !r <- restore (force <$> actionThatReturnsAResponse conn)
+               -- TODO: why onException instead of 'catch'?:
                `E.onException` rollback_ conn
             (case rspShouldCommit r of
                ShouldCommit -> PSQL.commit conn

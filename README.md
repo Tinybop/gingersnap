@@ -50,7 +50,7 @@ one ctx =
 You can run the code from this file with
 
     $ cabal update
-    $ cabal install gingersnap snap-server
+    $ cabal install gingersnap snap-server markdown-unlit
     $ ghci -pgmL markdown-unlit README.lhs   # The "-pgmL" is just for this README
 
 And calling "main". In another window, if you call:
